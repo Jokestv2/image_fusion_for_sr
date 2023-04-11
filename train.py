@@ -1,115 +1,89 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Jun 13 15:59:40 2019
-
-@author: win10
-"""
-import os
-os.chdir(r'D:\py_code\densefuse_pytorch')
-
-from torch.utils.data import DataLoader
-import torch.optim as optim
 import torch.nn as nn
 import torch
+from torchvision import transforms
+import os
 
-from densefuse_net import DenseFuseNet
-from dataset import AEDataset
-from ssim import SSIM 
+from ssim import SSIM
 from utils import mkdir
 
-import os
-import scipy.io as scio
-import numpy as np
-from matplotlib import pyplot as plt
 
-# Parameters
-root = 'D:/coco/train2014_train/'
-root_val = 'D:/coco/train2014_val/'
-train_path = './train_result/'
-epochs = 4
-batch_size = 2
-device = 'cuda'
-lr = 1e-4
-lambd = 1
-loss_interval = 1000
-model_interval = 1000
-# Dataset
-data = AEDataset(root, resize= [256,256], transform = None, gray = True)
-loader = DataLoader(data, batch_size = batch_size, shuffle=True)
-data_val = AEDataset(root_val, resize= [256,256], transform = None, gray = True)
-loader_val = DataLoader(data_val, batch_size = 100, shuffle=True)
-
-# Model
-model = DenseFuseNet().to(device)
-print(model)
-optimizer = optim.Adam(model.parameters(), lr = lr)
 MSE_fun = nn.MSELoss()
 SSIM_fun = SSIM()
 
 
-# Training
-mse_train = []
-ssim_train = []
-loss_train = []
-mse_val = []
-ssim_val = []
-loss_val = []
-mkdir(train_path)
-print('============ Training Begins ===============')
-for iteration in range(epochs):
-    for index, img in enumerate(loader):
-        img = img.to(device)
-        
-        optimizer.zero_grad()
-        img_recon = model(img)
-        mse_loss = MSE_fun(img,img_recon)
-        ssim_loss = 1-SSIM_fun(img,img_recon)
-        loss = mse_loss+lambd*ssim_loss
-        loss.backward()
-        optimizer.step()
-        
-        
-        if index%loss_interval ==0:
-            print('[%d,%d] -   Train    - MSE: %.10f, SSIM: %.10f'%
-              (iteration,index,mse_loss.item(),ssim_loss.item()))
-            mse_train.append(mse_loss.item())
-            ssim_train.append(ssim_loss.item())
-            loss_train.append(loss.item())
-            
-            with torch.no_grad():
-                tmp1, tmp2 = .0, .0
-                for _, img in enumerate(loader_val):
-                    img = img.to(device)
-                    img_recon = model(img)
-                    tmp1 += (MSE_fun(img,img_recon)*img.shape[0]).item()
-                    tmp2 += (SSIM_fun(img,img_recon)*img.shape[0]).item()
-                tmp3 = tmp1+lambd*tmp2
-                mse_val.append(tmp1/data_val.__len__())
-                ssim_val.append(tmp1/data_val.__len__())
-                loss_val.append(tmp1/data_val.__len__())
-            print('[%d,%d] - Validation - MSE: %.10f, SSIM: %.10f'%
-              (iteration,index,mse_val[-1],ssim_val[-1]))
-            scio.savemat(os.path.join(train_path, 'TrainData.mat'), 
-                         {'mse_train': np.array(mse_train),
-                          'ssim_train': np.array(ssim_train),
-                          'loss_train': np.array(loss_train)})
-            scio.savemat(os.path.join(train_path, 'ValData.mat'), 
-                         {'mse_val': np.array(mse_val),
-                          'ssim_val': np.array(ssim_val),
-                          'loss_val': np.array(loss_val)})
-        
-            plt.figure(figsize=[12,8])
-            plt.subplot(2,3,1), plt.semilogy(mse_train), plt.title('mse train')
-            plt.subplot(2,3,2), plt.semilogy(ssim_train), plt.title('ssim train')
-            plt.subplot(2,3,3), plt.semilogy(loss_train), plt.title('loss train')
-            plt.subplot(2,3,4), plt.semilogy(mse_val), plt.title('mse val')
-            plt.subplot(2,3,5), plt.semilogy(ssim_val), plt.title('ssim val')
-            plt.subplot(2,3,6), plt.semilogy(loss_val), plt.title('loss val')
-            
-            plt.savefig(os.path.join(train_path,'curve.png'),dpi=90)
-        
-        if index%model_interval ==0:
-            torch.save( {'weight': model.state_dict(), 'epoch':iteration, 'batch_index': index},
-                       os.path.join(train_path,'model_weight_new.pkl'))
-            print('[%d,%d] - model is saved -'%(iteration,index))
-            
+def cal_loss(img_fused, img_gt, MSE_fun, SSIM_fun, loss_lambda):
+    mse_loss = MSE_fun(img_fused, img_gt)
+    ssim_loss = 1 - SSIM_fun(img_fused, img_gt)
+    loss = mse_loss + loss_lambda * ssim_loss
+    return loss, mse_loss, ssim_loss
+
+
+def train(dataloader_train,
+          dataloader_val,
+          model,
+          optimizer,
+          device,
+          save_folder_path='./train_result',
+          fuse_strategy='average',
+          epochs=10,
+          loss_lambda=1,
+          val_interval=10):
+    mkdir(save_folder_path)
+    model = model.to(device)
+    for epoch in range(epochs):
+        for idx, (inputs, data_samples) in enumerate(dataloader_train):
+            img1, img2 = inputs['x1'], inputs['x2']
+            img_gt = data_samples['gt']
+            if not dataloader_train.dataset.is_gray:
+                img1 = img1.reshape(-1, img1.shape[-2], img1.shape[-1]).unsqueeze(1)
+                img2 = img2.reshape(-1, img2.shape[-2], img2.shape[-1]).unsqueeze(1)
+                img_gt = img_gt.reshape(-1, img_gt.shape[-2], img_gt.shape[-1]).unsqueeze(1)
+            img1, img2 = img1.to(device), img2.to(device)
+            img_gt = img_gt.to(device)
+
+            optimizer.zero_grad()
+            img_fused = model(img1, img2, fuse_strategy=fuse_strategy)
+            loss, _, _ = cal_loss(img_fused, img_gt, MSE_fun, SSIM_fun, loss_lambda)
+            loss.backward()
+            optimizer.step()
+
+            del img1, img2, img_gt
+            if idx % val_interval == 0:
+                with torch.no_grad():
+                    loss_avg, mse_loss_avg, ssim_loss_avg, data_num = 0., 0., 0., 0
+                    for inputs_val, data_samples_val in dataloader_val:
+                        img1, img2, file_names = inputs_val['x1'], inputs_val['x2'], inputs_val['file_name']
+                        img_gt = data_samples_val['gt']
+                        if not dataloader_val.dataset.is_gray:
+                            img1 = img1.reshape(-1, img1.shape[-2], img1.shape[-1]).unsqueeze(1)
+                            img2 = img2.reshape(-1, img2.shape[-2], img2.shape[-1]).unsqueeze(1)
+                            img_gt = img_gt.reshape(-1, img_gt.shape[-2], img_gt.shape[-1]).unsqueeze(1)
+                        img1, img2 = img1.to(device), img2.to(device)
+                        img_gt = img_gt.to(device)
+
+                        img_fused = model(img1, img2, fuse_strategy=fuse_strategy)
+                        loss, mse_loss, ssim_loss = cal_loss(img_fused, img_gt, MSE_fun, SSIM_fun, loss_lambda)
+                        bs = dataloader_val.batch_size
+                        mse_loss_avg += mse_loss.item() * bs
+                        ssim_loss_avg += ssim_loss.item() * bs
+                        loss_avg += loss.item() * bs
+                        data_num += bs
+
+                        # save validation results
+                        img_save_folder_path = os.path.join(save_folder_path, 'images', f'epoch_{epoch}_idx_{idx}')
+                        mkdir(img_save_folder_path)
+                        if not dataloader_val.dataset.is_gray:
+                            img_fused = img_fused.reshape(-1, 3, img_fused.shape[-2], img_fused.shape[-1])
+                        for img_idx in range(img_fused.shape[0]):
+                            img_fusion = transforms.ToPILImage()(img_fused[img_idx].detach().cpu())
+                            img_fusion.save(os.path.join(img_save_folder_path, file_names[img_idx]))
+                    loss_avg, mse_loss_avg, ssim_loss_avg = loss_avg/data_num, mse_loss_avg/data_num, ssim_loss_avg/data_num
+                    print(f"\t Epoch: {epoch}, {idx}/{len(dataloader_train)}, loss_avg: {loss_avg}, mse_loss_avg: {mse_loss_avg}, ssim_loss: {ssim_loss_avg}")
+
+        param_to_save = {
+            'weight': model.state_dict,
+            'epoch': epoch,
+        }
+        torch.save(param_to_save, os.path.join(save_folder_path, f'model_weight_epoch{epoch}.pkl'))
+        print(f"model saved for epoch: {epoch}")
