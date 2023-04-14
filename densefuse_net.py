@@ -53,23 +53,25 @@ class DenseFusionNet(nn.Module):
         self.encoder = Encoder()
         self.decoder = Decoder()
 
-    def forward(self, x1, x2, fuse_strategy='average', window_width=1):
-        x1 = self.encoder(x1)
-        x2 = self.encoder(x2)
+    def forward(self, inputs, mode='test', fuse_strategy='average', window_width=1):
+        """
+        It is assumed that inputs are dict with keys like "img_1, img_2, ..., img_x"
+        And inputs[img_x] is all gray image with dimension (1, 1, h, w)
+        """
         if fuse_strategy == 'average':
-            x = (x1 + x2) / 2
-        elif fuse_strategy == 'l1':
-            activity_map1 = x1.abs()
-            activity_map2 = x2.abs()
-
-            kernel = torch.ones(2 * self.window_width + 1, 2 * self.window_width + 1) / (2 * self.window_width + 1) ** 2
-            kernel = kernel.to(x1.device).type(torch.float32)[None, None, :, :]
-            kernel = kernel.expand(x1.shape[1], x1.shape[1], 2 * self.window_width + 1, 2 * self.window_width + 1)
-            activity_map1 = F.conv2d(activity_map1, kernel, padding=self.window_width)
-            activity_map2 = F.conv2d(activity_map2, kernel, padding=self.window_width)
-            weight_map1 = activity_map1 / (activity_map1 + activity_map2)
-            weight_map2 = activity_map2 / (activity_map1 + activity_map2)
-            x = weight_map1 * x1 + weight_map2 * x2
+            assert isinstance(inputs['x1'], torch.Tensor)
+            if mode == 'train':
+                x = self.encoder(inputs['x1'])
+            elif mode == 'test':
+                x = 0.
+                num_img = 0
+                for img_key in inputs:
+                    if 'x' in img_key and isinstance(inputs[img_key], torch.Tensor):
+                        x += self.encoder(inputs[img_key])
+                        num_img += 1
+                x /= num_img
+            else:
+                raise RuntimeError(f'mode: {mode} is not supported!')
         else:
             raise RuntimeError(f'fuse_strategy: {fuse_strategy} is not supported!')
         return self.decoder(x)

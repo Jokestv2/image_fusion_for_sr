@@ -29,6 +29,7 @@ This is a pytorch implement of DenseFuse proposed by this paper,
 
 The code is writted with torch 1.1.0 and pytorch-ssim.
 
+SRefSR results in the dataset is computed by the C2-matching method (https://github.com/lastbasket/C2-Matching)
 
 ## 🎈 Usage <a name="usage"></a>
 

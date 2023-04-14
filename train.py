@@ -33,36 +33,35 @@ def train(dataloader_train,
     model = model.to(device)
     for epoch in range(epochs):
         for idx, (inputs, data_samples) in enumerate(dataloader_train):
-            img1, img2 = inputs['x1'], inputs['x2']
+            assert isinstance(inputs['x1'], torch.Tensor)
+            img_in = inputs['x1']
             img_gt = data_samples['gt']
             if not dataloader_train.dataset.is_gray:
-                img1 = img1.reshape(-1, img1.shape[-2], img1.shape[-1]).unsqueeze(1)
-                img2 = img2.reshape(-1, img2.shape[-2], img2.shape[-1]).unsqueeze(1)
+                inputs['x1'] = img_in.reshape(-1, img_in.shape[-2], img_in.shape[-1]).unsqueeze(1)
                 img_gt = img_gt.reshape(-1, img_gt.shape[-2], img_gt.shape[-1]).unsqueeze(1)
-            img1, img2 = img1.to(device), img2.to(device)
+            inputs['x1'] = inputs['x1'].to(device)
             img_gt = img_gt.to(device)
 
             optimizer.zero_grad()
-            img_fused = model(img1, img2, fuse_strategy=fuse_strategy)
+            img_fused = model(inputs, mode='train', fuse_strategy=fuse_strategy)
             loss, _, _ = cal_loss(img_fused, img_gt, MSE_fun, SSIM_fun, loss_lambda)
             loss.backward()
             optimizer.step()
 
-            del img1, img2, img_gt
+            del inputs['x1'], img_gt
             if idx % val_interval == 0:
                 with torch.no_grad():
                     loss_avg, mse_loss_avg, ssim_loss_avg, data_num = 0., 0., 0., 0
                     for inputs_val, data_samples_val in dataloader_val:
-                        img1, img2, file_names = inputs_val['x1'], inputs_val['x2'], inputs_val['file_name']
+                        img1, file_names = inputs_val['x1'], inputs_val['file_name']
                         img_gt = data_samples_val['gt']
                         if not dataloader_val.dataset.is_gray:
-                            img1 = img1.reshape(-1, img1.shape[-2], img1.shape[-1]).unsqueeze(1)
-                            img2 = img2.reshape(-1, img2.shape[-2], img2.shape[-1]).unsqueeze(1)
+                            inputs_val['x1'] = img1.reshape(-1, img1.shape[-2], img1.shape[-1]).unsqueeze(1)
                             img_gt = img_gt.reshape(-1, img_gt.shape[-2], img_gt.shape[-1]).unsqueeze(1)
-                        img1, img2 = img1.to(device), img2.to(device)
+                        inputs_val['x1'] = inputs_val['x1'].to(device)
                         img_gt = img_gt.to(device)
 
-                        img_fused = model(img1, img2, fuse_strategy=fuse_strategy)
+                        img_fused = model(inputs_val, mode='train', fuse_strategy=fuse_strategy)
                         loss, mse_loss, ssim_loss = cal_loss(img_fused, img_gt, MSE_fun, SSIM_fun, loss_lambda)
                         bs = dataloader_val.batch_size
                         mse_loss_avg += mse_loss.item() * bs

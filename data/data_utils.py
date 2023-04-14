@@ -54,10 +54,12 @@ def main():
     val_idx_list = range(100, 108)
     test_idx_list = [2, 39, 10, 80, 93, 65, 91, 0]
     train_idx_list = list(set(range(num_input)) - set(val_idx_list) - set(test_idx_list))
+    test_total_idx_list = range(num_input)
     fusion_datasets_idx_list = {
         'train': train_idx_list,
         'val': val_idx_list,
-        'test': test_idx_list
+        'test': test_idx_list,
+        'test_total': test_total_idx_list
     }
 
     for fusion_folder_name in fusion_datasets_idx_list:

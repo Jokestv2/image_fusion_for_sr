@@ -16,10 +16,11 @@ import random
 
 
 class ImageFusionDataset(Data.Dataset):
-    def __init__(self, data_root, transform=None, is_gray=True):
+    def __init__(self, data_root, mode='train', transform=None, is_gray=True):
         self.data_root = data_root
         self.is_gray = is_gray
         self.transform = transform
+        self.mode = mode
 
         # use the same seed for transform to get the same cropping area for training
         self.cur_seed = torch.random.seed()
@@ -28,11 +29,16 @@ class ImageFusionDataset(Data.Dataset):
         file_path_list = glob(os.path.join(self.gt_folder_path, '*.*'))
 
         # it is assumed that corresponding files in all folders have the same name
-        self.file_name_list= [os.path.basename(p) for p in file_path_list]
+        self.file_name_list = [os.path.basename(p) for p in file_path_list]
         self.input_folder_path_list = glob(os.path.join(data_root, 'img_*'))
 
     def __len__(self):
-        return len(self.file_name_list)
+        if self.mode == 'train':
+            return len(self.file_name_list) * len(self.input_folder_path_list)
+        elif self.mode == 'test':
+            return len(self.file_name_list)
+        else:
+            raise RuntimeError(f'mode: {self.mode} is not supported!')
 
     def read_img(self, path):
         img = Image.open(path)
@@ -47,13 +53,25 @@ class ImageFusionDataset(Data.Dataset):
         return img
 
     def __getitem__(self, idx):
-        inputs = {
-            f'x{i + 1}': self.read_img(os.path.join(self.input_folder_path_list[i], self.file_name_list[idx]))
-            for i in range(len(self.input_folder_path_list))
-        }
-        inputs['file_name'] = self.file_name_list[idx]
+        self.cur_seed = torch.random.seed()
+        if self.mode == 'train':
+            file_i = idx % len(self.file_name_list)
+            folder_i = idx // len(self.file_name_list)
+            inputs = {
+                'x1': self.read_img(os.path.join(self.input_folder_path_list[folder_i], self.file_name_list[file_i]))
+            }
+        elif self.mode == 'test':
+            file_i = idx
+            inputs = {
+                f'x{i + 1}': self.read_img(os.path.join(self.input_folder_path_list[i], self.file_name_list[file_i]))
+                for i in range(len(self.input_folder_path_list))
+            }
+        else:
+            raise RuntimeError(f'mode: {self.mode} is not supported!')
 
+        inputs['file_name'] = self.file_name_list[file_i]
         data_samples = {
-            'gt': self.read_img(os.path.join(self.gt_folder_path, self.file_name_list[idx]))
+            'gt': self.read_img(os.path.join(self.gt_folder_path, self.file_name_list[file_i]))
         }
+
         return inputs, data_samples
